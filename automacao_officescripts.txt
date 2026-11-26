@@ -1,0 +1,192 @@
+// Office Script (TypeScript) - Excel
+// Preenche a descrição de cada item de pedido a partir do código do produto (col. D)
+// e da variante (cor) identificada na coluna F. Desfaz a mesclagem D:E apenas nos blocos tratados.
+
+type Variante = "AZUL" | "GRAFITE" | "CORAL";
+
+interface Produto {
+  codigo: string;
+  descricoes: { [variante in Variante]: string };
+}
+
+interface Registro {
+  blocos: number;
+  variantes: string[];
+}
+
+// Catálogo fictício de demonstração
+const PRODUTOS: Produto[] = [
+  {
+    codigo: "NX-1001",
+    descricoes: {
+      AZUL: "GARRAFA TERMICA NIMBUS 500ML AZUL 4101",
+      GRAFITE: "GARRAFA TERMICA NIMBUS 500ML GRAFITE 4102",
+      CORAL: "GARRAFA TERMICA NIMBUS 500ML CORAL 4103"
+    }
+  },
+  {
+    codigo: "NX-1002",
+    descricoes: {
+      AZUL: "MOCHILA URBANA HORIZONTE 20L AZUL 4204",
+      GRAFITE: "MOCHILA URBANA HORIZONTE 20L GRAFITE 4205",
+      CORAL: "MOCHILA URBANA HORIZONTE 20L CORAL 4206"
+    }
+  },
+  {
+    codigo: "NX-1003",
+    descricoes: {
+      AZUL: "LUMINARIA DE MESA ORBITA LED AZUL 4307",
+      GRAFITE: "LUMINARIA DE MESA ORBITA LED GRAFITE 4308",
+      CORAL: "LUMINARIA DE MESA ORBITA LED CORAL 4309"
+    }
+  },
+  {
+    codigo: "NX-1004",
+    descricoes: {
+      AZUL: "CADERNO PRISMA 96 FOLHAS AZUL 4410",
+      GRAFITE: "CADERNO PRISMA 96 FOLHAS GRAFITE 4411",
+      CORAL: "CADERNO PRISMA 96 FOLHAS CORAL 4412"
+    }
+  },
+  {
+    codigo: "NX-1005",
+    descricoes: {
+      AZUL: "FONE BLUETOOTH ECO PULSE AZUL 4513",
+      GRAFITE: "FONE BLUETOOTH ECO PULSE GRAFITE 4514",
+      CORAL: "FONE BLUETOOTH ECO PULSE CORAL 4515"
+    }
+  },
+  {
+    codigo: "NX-1006",
+    descricoes: {
+      AZUL: "ORGANIZADOR MODULAR AURORA AZUL 4616",
+      GRAFITE: "ORGANIZADOR MODULAR AURORA GRAFITE 4617",
+      CORAL: "ORGANIZADOR MODULAR AURORA CORAL 4618"
+    }
+  }
+];
+
+// Prefixo numérico -> variante ("1 - ...", "2 - ...", "3 - ...")
+const VARIANTE_POR_NUMERO: { [n: string]: Variante } = {
+  "1": "AZUL",
+  "2": "GRAFITE",
+  "3": "CORAL"
+};
+
+function identificarVariante(texto: string): Variante | "" {
+  const t = texto.trim().toUpperCase();
+
+  // Formato 1: começa com "1 -", "2 -" ou "3 -"
+  const mNum = t.match(/^([123])\s*-/);
+  if (mNum) return VARIANTE_POR_NUMERO[mNum[1]];
+
+  // Formato 2: termina com o nome da cor
+  const mCor = t.match(/\b(AZUL|GRAFITE|CORAL)\s*$/);
+  if (mCor) return mCor[1] as Variante;
+
+  return "";
+}
+
+function main(workbook: ExcelScript.Workbook) {
+  const sheet = workbook.getActiveWorksheet();
+  const used = sheet.getUsedRange();
+  const ultimaLinha = used.getRowIndex() + used.getRowCount();
+
+  // Leitura em lote (colunas D:F) para evitar uma chamada por célula
+  const dados = sheet.getRange("D1:F" + ultimaLinha).getValues();
+  const n = dados.length;
+
+  const relatorio: { [codigo: string]: Registro } = {};
+  const naoReconhecidas: string[] = [];
+
+  let i = 0;
+  while (i < n) {
+    const codigoAtual = String(dados[i][0]).trim();
+
+    // Procura o produto pelo código
+    let produto: Produto | undefined = undefined;
+    for (let p = 0; p < PRODUTOS.length; p++) {
+      if (PRODUTOS[p].codigo === codigoAtual) {
+        produto = PRODUTOS[p];
+        break;
+      }
+    }
+    if (produto === undefined) {
+      i++;
+      continue;
+    }
+
+    // Bloco = linha do código + linhas seguintes com D vazio (parte mesclada) e F preenchida
+    let fim = i;
+    while (
+      fim + 1 < n &&
+      String(dados[fim + 1][0]).trim() === "" &&
+      String(dados[fim + 1][2]).trim() !== ""
+    ) {
+      fim++;
+    }
+
+    // Desfaz a mesclagem somente em D:E deste bloco
+    if (fim > i) {
+      sheet.getRange("D" + (i + 1) + ":E" + (fim + 1)).unmerge();
+    }
+
+    const valorOriginal = dados[i][0];
+
+    for (let k = i; k <= fim; k++) {
+      const variante = identificarVariante(String(dados[k][2]));
+
+      if (variante === "") {
+        naoReconhecidas.push("linha " + (k + 1) + " (F = " + String(dados[k][2]) + ")");
+        continue;
+      }
+
+      const descricao = produto.descricoes[variante];
+
+      // Código na coluna D (mantém texto como texto)
+      const celulaD = sheet.getRange("D" + (k + 1));
+      if (typeof valorOriginal === "string") {
+        celulaD.setNumberFormat("@");
+        celulaD.setValue(String(valorOriginal));
+      } else {
+        celulaD.setValue(valorOriginal);
+      }
+
+      // Descrição na coluna E, alinhada à esquerda e com a altura da linha ajustada
+      const celulaE = sheet.getRange("E" + (k + 1));
+      celulaE.setValue(descricao);
+      celulaE.getFormat().setHorizontalAlignment(ExcelScript.HorizontalAlignment.left);
+      celulaE.getFormat().setVerticalAlignment(ExcelScript.VerticalAlignment.top);
+      celulaE.getFormat().setWrapText(true);
+      sheet.getRange((k + 1) + ":" + (k + 1)).getFormat().autofitRows();
+
+      if (relatorio[codigoAtual] === undefined) {
+        relatorio[codigoAtual] = { blocos: 0, variantes: [] };
+      }
+      if (relatorio[codigoAtual].variantes.indexOf(variante) === -1) {
+        relatorio[codigoAtual].variantes.push(variante);
+      }
+    }
+
+    if (relatorio[codigoAtual] !== undefined) {
+      relatorio[codigoAtual].blocos++;
+    }
+    i = fim + 1;
+  }
+
+  // Resumo final (só informa, não interrompe)
+  let resumo = "=== RESUMO ===\n";
+  for (let p = 0; p < PRODUTOS.length; p++) {
+    const cod = PRODUTOS[p].codigo;
+    const r = relatorio[cod];
+    if (r === undefined) {
+      resumo += cod + ": não encontrado na planilha\n";
+    } else {
+      resumo += cod + ": " + r.blocos + " bloco(s), variantes encontradas: " + r.variantes.join(", ") + "\n";
+    }
+  }
+  if (naoReconhecidas.length > 0) {
+    resumo += "Linhas com variante não reconhecida (não alteradas): " + naoReconhecidas.join("; ");
+  }
+  console.log(resumo);
+}
